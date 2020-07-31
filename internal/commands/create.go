@@ -45,7 +45,7 @@ Create constraints and link to the offending policy in the response from Gatekee
 			}
 
 			if err := viper.BindPFlag("docs-url", cmd.PersistentFlags().Lookup("docs-url")); err != nil {
-				return fmt.Errorf("bind ouput flag: %w", err)
+				return fmt.Errorf("bind docs-url flag: %w", err)
 			}
 
 			path := "."
