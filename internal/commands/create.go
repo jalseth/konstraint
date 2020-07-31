@@ -5,6 +5,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/plexsystems/konstraint/internal/rego"
@@ -29,7 +30,10 @@ Save the constraints in a specific directory
 	konstraint create examples --output generated-constraints
 
 Create constraints with the Gatekeeper enforcement action set to dryrun
-	konstraint create examples --dryrun`,
+	konstraint create examples --dryrun
+
+Create constraints and link to the offending policy in the response from Gatekeeper
+	konstraint create examples --docs-url "https://github.com/plexsystems/konstraint/blob/main/examples"`,
 
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := viper.BindPFlag("dryrun", cmd.PersistentFlags().Lookup("dryrun")); err != nil {
@@ -37,6 +41,10 @@ Create constraints with the Gatekeeper enforcement action set to dryrun
 			}
 
 			if err := viper.BindPFlag("output", cmd.PersistentFlags().Lookup("output")); err != nil {
+				return fmt.Errorf("bind ouput flag: %w", err)
+			}
+
+			if err := viper.BindPFlag("docs-url", cmd.PersistentFlags().Lookup("docs-url")); err != nil {
 				return fmt.Errorf("bind ouput flag: %w", err)
 			}
 
@@ -51,6 +59,7 @@ Create constraints with the Gatekeeper enforcement action set to dryrun
 
 	cmd.PersistentFlags().StringP("output", "o", "", "Specify an output directory for the Gatekeeper resources")
 	cmd.PersistentFlags().BoolP("dryrun", "d", false, "Sets the enforcement action of the constraints to dryrun")
+	cmd.PersistentFlags().String("docs-url", "", "Base URL to the folder with the policies to be linked to")
 
 	return &cmd
 }
@@ -73,6 +82,14 @@ func runCreateCommand(path string) error {
 
 	for l := range libraries {
 		libraries[l].Contents = getRegoWithoutComments(libraries[l].Contents)
+
+		if libraries[l].PackageName == "data.lib.core" && viper.GetString("docs-url") != "" {
+			libraries[l].Contents = strings.ReplaceAll(libraries[l].Contents, "format(msg)", "format(msg, details)")
+			libraries[l].Contents = strings.ReplaceAll(libraries[l].Contents,
+				`format(msg) = {"msg": msg}`,
+				`format(msg, details) = {"msg": msg, "details": details}`,
+			)
+		}
 	}
 
 	var templateFileName, constraintFileName, outputDir string
@@ -97,6 +114,15 @@ func runCreateCommand(path string) error {
 		matchingLibraries := getMatchingLibraries(policy, libraries)
 		if len(matchingLibraries) != len(policy.ImportPackages) {
 			return fmt.Errorf("missing imported libraries")
+		}
+
+		if viper.GetString("docs-url") != "" {
+			policyDirSplit := strings.Split(policyDir, "/")
+			policyDirName := policyDirSplit[len(policyDirSplit)-1:][0]
+			replaceWith := fmt.Sprintf(`$1, {"policyURL": "%s/%s"})`, viper.GetString("docs-url"), policyDirName)
+
+			re := regexp.MustCompile(`(core\.format\(.+)\)`)
+			policy.Contents = re.ReplaceAllString(policy.Contents, replaceWith)
 		}
 
 		if _, err := os.Stat(outputDir); os.IsNotExist(err) {
